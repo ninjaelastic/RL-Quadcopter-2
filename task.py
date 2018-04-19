@@ -23,68 +23,62 @@ class Task():
         self.action_high = 900
         self.action_size = 4
 
-        # setup target takeoff and landing goals position
-        if init_pose is not None:
-            self.takeoff_pos = np.array([init_pose[0], init_pose[1], 10.])
-            self.landing_pos = np.array([init_pose[0], init_pose[1], 0.])
-        else:
-            self.takeoff_pos = np.array([0., 0., 10.])
-            self.landing_pos = np.array([0., 0., 0.])
+        # Goal
+        self.target_pos = target_pos if target_pos is not None else np.array([0., 0., 10.]) 
+      
 
-        # init goal triggers
-        self.takeoff = False
-        self.landing = False
-
-    def _get_reward_takeoff(self):
-        """ Reward policy for takeoff procedure """
-
-        xy_current = self.sim.pose[:2]
-        xy_target = self.takeoff_pos[:2]
-
-        z_current = self.sim.pose[2]
-        z_target = self.takeoff_pos[2]
-
-        reward = -1  # init reward variable
-
-        # reward for targeting takeoff z
-        if z_current == 0:
-            reward -= 1
-        elif 0 < z_current <= 12.0:
-            reward += abs(10 - (10 - z_current))
-
-        # penalty for changing x, y meassured in velocity
-        reward -= (abs(xy_current - xy_target)).sum()
-
+    def get_reward(self):
+        """ Simple reward based on the distance to target. Counts XYZ coordinates """
+        reward = 0.
+        dist = np.linalg.norm(np.array(self.sim.pose[:3])-np.array(self.target_pos))
+        reward -= dist
+        
         return reward
 
     def step(self, rotor_speeds):
-        """Uses action to obtain next state, reward, done."""
+        """Policy for take off action"""
         reward = 0
         pose_all = []
         for _ in range(self.action_repeat):
-            print("rotor speed:", rotor_speeds)
-            done = self.sim.next_timestep(rotor_speeds)  # update the sim pose and velocities
+            done = self.sim.next_timestep(rotor_speeds) # update the sim pose and velocities
+            reward += self.get_reward() 
+            pose_all.append(self.sim.pose)
 
-            if not self.takeoff:  # takeoff control iteration
-                reward += self._get_reward_takeoff()
-                if self.sim.pose[2] >= self.takeoff_pos[2]:  # check if  I have to,can,may use x, y coordinates as well
-                    reward += 100
-                    done = True
-
-                pose_all.append(self.sim.pose)
-
-            next_state = np.concatenate(pose_all)
-            return next_state, reward, done
+            if self.sim.pose[2] >= self.target_pos[2]:
+                reward = 200
+                done = True
+        next_state = np.concatenate(pose_all)
+        return next_state, reward, done
 
     def reset(self):
         """Reset the sim to start a new episode."""
         self.sim.reset()
-
-        # reset goal triggers
-        self.takeoff = False
-        self.landing = False
-        state = np.concatenate([self.sim.pose] * self.action_repeat)
+        state = np.concatenate([self.sim.pose] * self.action_repeat) 
         return state
+
+    def step_takeoff_landing(self, rotor_speeds):
+        """Not finished policy for more complex action sequence go up than go down"""
+        reward = 0
+        pose_all = []
+        for _ in range(self.action_repeat):
+            done = self.sim.next_timestep(rotor_speeds) # update the sim pose and velocities
+            
+            if self.takeoff:
+                reward += self.get_reward_option_3() 
+                pose_all.append(self.sim.pose)
+                
+                if self.sim.pose[2] >= self.landing_pos[2]:
+                    reward = 100
+                    done = True
+            else:
+                reward += self.get_reward_option_2() 
+                pose_all.append(self.sim.pose)
+                if self.sim.pose[2] >= self.target_pos[2]:
+                    reward += 5
+                    self.takeoff = True
+                
+        next_state = np.concatenate(pose_all)
+        return next_state, reward, done
 
 
 if __name__ == '__main__':
@@ -92,7 +86,7 @@ if __name__ == '__main__':
     init_pose = np.asarray([[0., 0., 0., 0., 0., 0.], [3., 3., 0., 0., 0., 0.]])
 
     rotor_speeds_up = np.array([900.,900.,900.,900.])
-    rotor_speeds_off = np.array([34.,400.,34.,300.])
+    rotor_speeds_off = np.array([34.,400.,300.,300.])
 
 
 
